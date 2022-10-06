@@ -1,0 +1,156 @@
+from django.db import models
+from django.utils.safestring import mark_safe
+from django.core.exceptions import ValidationError
+
+#IMPORTAMOS EL MODULO DE USUARIOS DE DJANGO
+from django.contrib.auth.models import User
+
+# from Clientes.models import Cliente
+from productos.models import Producto
+from proveedores.models import Proveedor
+from caja.models import Caja
+from boleta.models import Boleta
+# Create your models here.
+
+"""
+NOTA: PARA USAR LA RELACION ENTRE EL USUARIO QUE TRAE django
+es necesario hacer el import ddel modelo
+from django.contrib.auth.models import User
+y hacer la foranea en el modelo que necesitemos
+"""
+
+
+class DevolucionC(models.Model):
+
+	"""
+	class Meta: nos permite mostrar los nombres de nuestras apps en el framework con el nombre
+	que debemos darle tambien evita que se le agreguen los guiones bajos en caso si se tuvieran
+	espacios
+	"""
+	class Meta:
+		verbose_name = 'Devoluciones sobre venta'
+		verbose_name_plural = 'Devoluciones sobre ventas'
+
+	"""
+	Este modelo guardara todos los datos
+	referentes a la venta que se realizará
+	de los productos
+	"""
+
+	fecha = models.DateField('Fecha', auto_now_add=True)#el sistema captura la fecha en el momento exacto
+	estado = models.BooleanField('Estado', default=True)
+	# cliente = models.ForeignKey(Cliente , on_delete=models.CASCADE)
+	usuario = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, editable=False)
+	boleta = models.ForeignKey(Boleta, on_delete=models.CASCADE, null=True, blank=True) #Borrar null=True y blank=True
+
+	"""
+	CASCADE: si tengo grupo de registros del mismo cliente y si se desea
+	borrar sus registros CASCADE eliminara todos sus registros del cliente
+
+	esto es una funcion de python que permite devolver
+	los valores que guarda para visualizarlos en el admin
+	"""
+	
+
+
+	def __str__(self):
+		return "{}".format(self.usuario)
+
+	def imprimir(self):
+		return mark_safe(
+		u'<a href="/imprimir/?id=%s" target="_blank" class="addlink">IMPRIMIR</a>'% self.id
+		)
+		ficha.short_description = 'IMPRIMIR'
+
+
+	"""
+	funcion para devolver la direccion del cliente
+	"""
+
+
+
+	#calcular total	de venta
+
+	def calcular_total(self):
+		id_dev=self.pk
+		articulos=Detalledevolucion.objects.filter(boleta=id_dev)
+		total=0
+		for articulo in articulos:
+			subtotal=articulo.cantidad * articulo.producto.precio_venta #  cantidad * producto = total
+			total += subtotal
+
+		return "Q.{}".format(total) # devolvemos el total de la venta
+
+	def get_id_boleta(self):
+		return self.boleta.pk
+
+
+
+
+class Detalledevolucion(models.Model):
+
+	class Meta:
+		verbose_name = 'Detalle de compra'
+		verbose_name_plural = 'Detalles de compras'
+
+	"""
+	Este modelo guardara el detalle de la venta
+	"""
+	cantidad = models.PositiveIntegerField('Cantidad', help_text='Ingresar solo numeros positivos.')
+	boleta = models.ForeignKey(DevolucionC, on_delete=models.CASCADE)
+	producto = models.ForeignKey(Producto, on_delete=models.CASCADE)
+
+	"""
+	esto es una funcion de python que permite devolver
+	los valores que guarda para visualizarlos en el admin
+	"""
+	def save(self, force_insert=False, force_update=False, using=None):
+		from boleta.models import Detalle
+		# pro = Producto.objects.filter(nombre=self.producto)
+		# print(pro)
+		# pro.existencias = pro.existencias+self.cantidad
+		# pro.save()
+		from django.db import transaction
+		if not self.pk:
+			isnew = True
+		else:
+			isnew = False
+
+		with transaction.atomic():
+			if isnew:
+				# self.producto.existencias = self.producto.existencias + self.cantidad
+				id_boleta=self.boleta.get_id_boleta()
+				subtotal=self.cantidad * self.producto.precio_venta
+				detalleboleta=Detalle.objects.filter(boleta_id=id_boleta)
+				for detalle in detalleboleta:
+					id_producto=detalle.producto.producto.pk
+					if id_producto == self.producto.pk:
+						detalle.cantidad = detalle.cantidad - self.cantidad
+						detalle.save()
+						self.producto.total_existencias = self.producto.total_existencias + self.cantidad #Es la que agregar los productos devueltos al inventario
+						self.producto.existencias_devueltas = self.producto.existencias_devueltas + self.cantidad
+						caja = Caja.objects.all().last()
+						caja.egresos = (caja.egresos + float(subtotal))
+			super(Detalledevolucion, self).save(force_insert, force_update, using)
+		self.producto.save()
+		caja.save()
+
+	def __str__(self):
+		return "{} {} {}".format(self.boleta.pk, self.cantidad, self.producto)
+
+	"""
+	funcion que devuelte la fecha en que se crea la boleta
+	"""
+
+	def fecha(self):
+		return "{}".format(self.boleta.fecha)
+
+	def clean(self):
+		super(Detalledevolucion, self).clean()
+		articulos=Detalledevolucion.objects.filter(boleta=id_dev)
+		subtotal=self.cantidad * self.producto.precio_venta
+		if self.cantidad < producto.existencias_devueltas:
+			raise ValidationError('Numero erroneo para realizar la venta de este lote. Existencia disponibles: '+ str(producto.existencias_devueltas))
+
+	def __str__(self):
+		return "{} {} {}".format(self.boleta.pk, self.producto.producto, self.cantidad)
