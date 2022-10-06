@@ -1,0 +1,161 @@
+from django.db import models
+from django.utils.safestring import mark_safe
+from django.core.exceptions import ValidationError
+from datetime import datetime, date
+
+#IMPORTAMOS EL MODULO DE USUARIOS DE DJANGO
+from django.contrib.auth.models import User
+
+from Clientes.models import Cliente
+from productos.models import Producto
+from caja.models import Caja
+from compras.models import Detallecompra
+# from proveedores.models import Proveedor
+# Create your models here.
+
+"""
+NOTA: PARA USAR LA RELACION ENTRE EL USUARIO QUE TRAE django
+es necesario hacer el import ddel modelo
+from django.contrib.auth.models import User
+y hacer la foranea en el modelo que necesitemos
+"""
+
+
+class Boleta(models.Model):
+
+	"""
+	class Meta: nos permite mostrar los nombres de nuestras apps en el framework con el nombre
+	que debemos darle tambien evita que se le agreguen los guiones bajos en caso si se tuvieran
+	espacios
+	"""
+	class Meta:
+		verbose_name = 'Boleta'
+		verbose_name_plural = 'Boletas'
+
+	"""
+	Este modelo guardara todos los datos
+	referentes a la venta que se realizará
+	de los productos
+	"""
+
+	fecha = models.DateField('Fecha', auto_now_add=True)#el sistema captura la fecha en el momento exacto
+	estado = models.BooleanField('Estado', default=True)
+	cliente = models.ForeignKey(Cliente , on_delete=models.CASCADE)
+	usuario = models.ForeignKey(User , on_delete=models.CASCADE, null=True, blank=True, editable=False)
+
+	"""
+	CASCADE: si tengo grupo de registros del mismo cliente y si se desea
+	borrar sus registros CASCADE eliminara todos sus registros del cliente
+
+	esto es una funcion de python que permite devolver
+	los valores que guarda para visualizarlos en el admin
+	"""
+	
+
+
+	def __str__(self):
+		return "Boleta de venta No. {}".format(self.pk)
+
+	def imprimir(self):
+		return mark_safe(
+		u'<a href="/imprimir/?id=%s" target="_blank" class="addlink">IMPRIMIR</a>'% self.id
+		)
+		ficha.short_description = 'IMPRIMIR'
+
+
+	"""
+	funcion para devolver la direccion del cliente
+	"""
+
+	def direccion(self):
+		return "{}".format(self.cliente.direccion)
+		# return "{}".format(self.proveedor.direccion)
+
+	#calcular total	de venta
+
+	def calcular_total(self):
+		id_venta=self.pk
+		articulos=Detalle.objects.filter(boleta=id_venta)
+		total=0
+		for articulo in articulos:
+			subtotal=articulo.cantidad * articulo.producto.producto.precio_venta #  cantidad * producto = total
+			#subtotal = articulo.subtotal
+			total += subtotal
+
+		return "Q.{}".format(total) # devolvemos el total de la venta
+
+
+
+
+
+class Detalle(models.Model):
+
+	class Meta:
+		verbose_name = 'Detalle de venta'
+		verbose_name_plural = 'Detalles de ventas'
+
+	"""
+	Este modelo guardara el detalle de la venta
+	"""
+	boleta = models.ForeignKey(Boleta, on_delete=models.CASCADE)
+	producto = models.ForeignKey(Detallecompra, on_delete=models.CASCADE, help_text='Verifique que el producto no este vencido.')
+	p = models.ForeignKey(Producto, on_delete=models.CASCADE, null=True, blank=True, editable=False)
+	cantidad = models.PositiveIntegerField('Cantidad', help_text='Ingresar solo números positivos.')
+	subtotal = models.FloatField('Subtotal', null=True, default=0.00, editable=False)
+	"""
+	esto es una funcion de python que permite devolver
+	los valores que guarda para visualizarlos en el admin
+	"""
+	def save(self, force_insert=False, force_update=False, using=None):
+		# pro = Producto.objects.filter(nombre=self.producto)
+		# print(pro)
+		# pro.existencias = pro.existencias+self.cantidad
+		# pro.save()
+		from django.db import transaction
+		if not self.pk:
+			isnew = True
+		else:
+			isnew = False
+			"""subtotal = self.cantidad * self.p.precio_venta
+			self.subtotal = subtotal
+			self.save()"""
+
+		with transaction.atomic():
+			if isnew:
+				id_producto = self.producto.producto.pk
+				producto = Producto.objects.get(id=id_producto)
+				self.p = producto
+				producto.total_existencias = producto.total_existencias - self.cantidad
+				producto.existencias_disponibles = producto.existencias_disponibles - self.cantidad
+				producto.save()
+				subtotal = self.cantidad * producto.precio_venta
+				self.subtotal = subtotal
+				caja = Caja.objects.all().last()
+				caja.ingresos = (caja.ingresos + float(subtotal))
+				caja.save()
+
+
+			super(Detalle, self).save(force_insert, force_update, using)
+
+
+
+	def clean(self):
+		super(Detalle, self).clean()
+		id_producto = self.producto.producto.pk
+		producto = Producto.objects.get(id=id_producto)
+		if self.cantidad > producto.existencias_disponibles:
+			raise ValidationError('Existencias disponibles insuficientes para realizar la venta de este lote. Existencia disponibles: '+ str(producto.existencias_disponibles))
+		else:
+			hoy = date.today()
+			if self.producto.fecha_vencimiento <= hoy:
+				raise ValidationError('El lote de producto elegido ha caducado, elegir otro lote de producto.')
+
+	def __str__(self):
+		return "{} {} {}".format(self.boleta.pk, self.producto.producto, self.cantidad)
+
+	"""
+	funcion que devuelte la fecha en que se crea la boleta
+	"""
+
+	def fecha(self):
+		return "{}".format(self.boleta.fecha)
